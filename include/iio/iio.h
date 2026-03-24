@@ -118,6 +118,13 @@ enum iio_log_level {
 	LEVEL_DEBUG = 5,
 };
 
+enum iio_context_flags {
+	/** @brief Include values in XML output
+	 * When set, iio_context_get_xml() will read and serialize attribute
+	 * values into the XML output. */
+	IIO_CTX_XML_INCLUDE_VALUES = 1 << 0,
+};
+
 /**
  * @struct iio_context_params
  * @brief IIO context creation information
@@ -155,8 +162,12 @@ struct iio_context_params {
 	 * - Positive values: timeout after specified milliseconds */
 	int timeout_ms;
 
+	/** @brief Flags that control context behavior.
+	 * Bitmask of values from enum iio_context_flags. */
+	unsigned int flags;
+
 	/** @brief Reserved for future fields. */
-	char __rsrv[32];
+	char __rsrv[28];
 };
 
 /*
