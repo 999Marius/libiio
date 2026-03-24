@@ -182,26 +182,267 @@ static ssize_t iio_snprintf_context_xml(char *ptr, ssize_t len,
 	return alen + ret;
 }
 
+static int iio_refresh_device_attr_values(struct iio_device *dev)
+{
+	unsigned int i;
+	ssize_t ret;
+	enum iio_attr_type type;
+	int err = 0;
+	char *buf;
+
+	buf = malloc(MAX_ATTR_VALUE);
+	if (!buf)
+		return -ENOMEM;
+
+	for (type = IIO_ATTR_TYPE_DEVICE; type <= IIO_ATTR_TYPE_DEBUG; type++) {
+		unsigned int num = dev->attrlist[type].num;
+
+		if (num == 0)
+			continue;
+
+		if (!dev->values[type]) {
+			dev->values[type] = calloc(num, sizeof(char *));
+			if (!dev->values[type]) {
+				err = -ENOMEM;
+				goto out_free_buf;
+			}
+		}
+
+		for (i = 0; i < num; i++) {
+			free(dev->values[type][i]);
+			dev->values[type][i] = NULL;
+
+			ret = iio_attr_read_raw(&dev->attrlist[type].attrs[i],
+						buf, MAX_ATTR_VALUE);
+			if (ret >= 0) {
+				dev->values[type][i] = iio_strdup(buf);
+				if (!dev->values[type][i]) {
+					err = -ENOMEM;
+					goto out_free_buf;
+				}
+			}
+		}
+	}
+
+out_free_buf:
+	free(buf);
+	return err;
+}
+
+static int iio_refresh_channel_attr_values(struct iio_channel *chn)
+{
+	unsigned int i;
+	ssize_t ret;
+	int err = 0;
+	char *buf;
+
+	if (chn->attrlist.num == 0)
+		return 0;
+
+	buf = malloc(MAX_ATTR_VALUE);
+	if (!buf)
+		return -ENOMEM;
+
+	if (!chn->values) {
+		chn->values = calloc(chn->attrlist.num, sizeof(char *));
+		if (!chn->values) {
+			err = -ENOMEM;
+			goto out_free_buf;
+		}
+	}
+
+	for (i = 0; i < chn->attrlist.num; i++) {
+		free(chn->values[i]);
+		chn->values[i] = NULL;
+
+		ret = iio_attr_read_raw(&chn->attrlist.attrs[i],
+					buf, MAX_ATTR_VALUE);
+		if (ret >= 0) {
+			chn->values[i] = iio_strdup(buf);
+			if (!chn->values[i]) {
+				err = -ENOMEM;
+				goto out_free_buf;
+			}
+		}
+	}
+
+out_free_buf:
+	free(buf);
+	return err;
+}
+
+static int iio_refresh_buffer_attr_values(struct iio_buffer *buf)
+{
+	unsigned int i;
+	ssize_t ret;
+	int err = 0;
+	char *tmp;
+
+	if (buf->attrlist.num == 0)
+		return 0;
+
+	tmp = malloc(MAX_ATTR_VALUE);
+	if (!tmp)
+		return -ENOMEM;
+
+	if (!buf->values) {
+		buf->values = calloc(buf->attrlist.num, sizeof(char *));
+		if (!buf->values) {
+			err = -ENOMEM;
+			goto out_free_buf;
+		}
+	}
+
+	for (i = 0; i < buf->attrlist.num; i++) {
+		free(buf->values[i]);
+		buf->values[i] = NULL;
+
+		ret = iio_attr_read_raw(&buf->attrlist.attrs[i],
+					tmp, MAX_ATTR_VALUE);
+		if (ret >= 0) {
+			buf->values[i] = iio_strdup(tmp);
+			if (!buf->values[i]) {
+				err = -ENOMEM;
+				goto out_free_buf;
+			}
+		}
+	}
+
+out_free_buf:
+	free(tmp);
+	return err;
+}
+
+static int iio_context_refresh_attr_values(struct iio_context *ctx)
+{
+	unsigned int i, j, k;
+	int ret;
+
+	for (i = 0; i < ctx->nb_devices; i++) {
+		struct iio_device *dev = ctx->devices[i];
+
+		ret = iio_refresh_device_attr_values(dev);
+		if (ret)
+			return ret;
+
+		for (j = 0; j < dev->nb_channels; j++) {
+			ret = iio_refresh_channel_attr_values(dev->channels[j]);
+			if (ret)
+				return ret;
+		}
+
+		for (k = 0; k < dev->nb_buffers; k++) {
+			ret = iio_refresh_buffer_attr_values(dev->buffers[k]);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return 0;
+}
+
+static void iio_free_device_attr_values(struct iio_device *dev)
+{
+	enum iio_attr_type type;
+	unsigned int i;
+
+	for (type = IIO_ATTR_TYPE_DEVICE; type <= IIO_ATTR_TYPE_DEBUG; type++) {
+		if (dev->values[type]) {
+			for (i = 0; i < dev->attrlist[type].num; i++) {
+				free(dev->values[type][i]);
+				dev->values[type][i] = NULL;
+			}
+			free(dev->values[type]);
+			dev->values[type] = NULL;
+		}
+	}
+}
+
+static void iio_free_channel_attr_values(struct iio_channel *chn)
+{
+	unsigned int i;
+
+	if (chn->values) {
+		for (i = 0; i < chn->attrlist.num; i++) {
+			free(chn->values[i]);
+			chn->values[i] = NULL;
+		}
+		free(chn->values);
+		chn->values = NULL;
+	}
+}
+
+static void iio_free_buffer_attr_values(struct iio_buffer *buf)
+{
+	unsigned int i;
+
+	if (buf->values) {
+		for (i = 0; i < buf->attrlist.num; i++) {
+			free(buf->values[i]);
+			buf->values[i] = NULL;
+		}
+		free(buf->values);
+		buf->values = NULL;
+	}
+}
+
+static void iio_context_free_attr_values(struct iio_context *ctx)
+{
+	unsigned int i, j, k;
+
+	for (i = 0; i < ctx->nb_devices; i++) {
+		struct iio_device *dev = ctx->devices[i];
+
+		iio_free_device_attr_values(dev);
+
+		for (j = 0; j < dev->nb_channels; j++)
+			iio_free_channel_attr_values(dev->channels[j]);
+
+		for (k = 0; k < dev->nb_buffers; k++)
+			iio_free_buffer_attr_values(dev->buffers[k]);
+	}
+}
+
 /* Returns a string containing the XML representation of this context */
 char * iio_context_get_xml(const struct iio_context *ctx)
 {
+	bool include_values = ctx->params.flags
+				& IIO_CTX_XML_INCLUDE_VALUES;
 	ssize_t len;
 	char *str;
+	int ret;
+
+	if (include_values) {
+		ret = iio_context_refresh_attr_values((struct iio_context *)ctx);
+		if (ret) {
+			str = iio_ptr(ret);
+			goto out_free_values;
+		}
+	}
 
 	len = iio_snprintf_context_xml(NULL, 0, ctx);
-	if (len < 0)
-		return iio_ptr((int) len);
+	if (len < 0) {
+		str = iio_ptr((int) len);
+		goto out_free_values;
+	}
 
 	len++; /* room for terminating NULL */
 	str = malloc(len);
-	if (!str)
-		return iio_ptr(-ENOMEM);
+	if (!str) {
+		str = iio_ptr(-ENOMEM);
+		goto out_free_values;
+	}
 
 	len = iio_snprintf_context_xml(str, len, ctx);
 	if (len < 0) {
 		free(str);
-		return iio_ptr((int) len);
+		str = iio_ptr((int) len);
+		goto out_free_values;
 	}
+
+out_free_values:
+	if (include_values)
+		iio_context_free_attr_values((struct iio_context *)ctx);
 
 	return str;
 }
