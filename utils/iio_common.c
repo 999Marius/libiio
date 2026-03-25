@@ -253,10 +253,12 @@ static const char *common_options_descriptions[] = {
 struct iio_context * handle_common_opts(char * name, int argc,
 		char * const argv[], const char *optstring,
 		const struct option *options, const char *options_descriptions[],
-		int *err_code)
+		const struct iio_context_params *caller_params, int *err_code)
 {
 	struct iio_context *ctx = NULL;
 	struct iio_context_params params = {0};
+	if (caller_params)
+		params = *caller_params;
 	enum backend backend = IIO_LOCAL;
 	const char *arg = NULL, *prefix = NULL;
 	bool do_scan = false, detect_context = false;
